@@ -1,0 +1,10 @@
+"updates":
+- "directory": "/"
+  "open-pull-requests-limit": 5
+  "package-ecosystem": "cargo"
+  "schedule":
+    "day": "monday"
+    "interval": "weekly"
+    "time": "04:00"
+    "timezone": "UTC"
+"version": 2
