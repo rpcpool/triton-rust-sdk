@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+  "triton-sdk",
+  "yellowstone-account-sync-proto"
+]
+
+[workspace.package]
+authors = ["Triton One"]
+edition = "2021"
+homepage = "https://triton.one"
+repository = "https://github.com/rpcpool/triton-rust-sdk"
+license = "APACHE-2.0"
+keywords = ["solana", "account-sync", "yellowstone", "grpc"]
+publish = false
+
+[workspace.dependencies]
+prost = "0.14.3"
+prost-types = "0.14.3"
+tonic = { version = "0.14.0", features = ["transport", "gzip", "zstd", "tls-native-roots", "tls-ring"] }
+tonic-prost = "0.14.3"
+yellowstone-grpc-proto = "12.5.0"
+protoc-bin-vendored = "3.2.0"
+tonic-prost-build = "0.14.3"

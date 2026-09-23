@@ -1,0 +1,3 @@
+[submodule "yellowstone-account-sync-proto/proto/yellowstone-grpc"]
+	path = yellowstone-account-sync-proto/proto/yellowstone-grpc
+	url = https://github.com/rpcpool/yellowstone-grpc

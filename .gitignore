@@ -1,0 +1,10 @@
+target/
+.vscode
+
+*yellowstone_account_sync_account_encoding_wasm*
+node_modules/
+dist/
+.env
+
+triton-sdk/src/wasm/account_encoding/
+triton-sdk/src/generated
