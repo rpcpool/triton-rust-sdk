@@ -1,3 +1,3 @@
-# Triton Rust SDK
+# Rust SDK for Triton One RPC and Streaming Services
 
-Placeholder. Content to follow.
+Checkout the docs at [https://docs.triton.one](https://docs.triton.one)
