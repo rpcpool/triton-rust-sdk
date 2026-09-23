@@ -11,4 +11,3 @@ setup-submodules:
 
 clean:
 	rm -rf target
-
