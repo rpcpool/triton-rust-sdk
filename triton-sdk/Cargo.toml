@@ -4,3 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+solana-client = { workspace = true }
+solana-account = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rpc-client-api = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-stream = { workspace = true }
+thiserror = { workspace = true }
+tonic = { workspace = true }
+yellowstone-account-sync-proto = { workspace = true }
