@@ -1,26 +1,24 @@
-use solana_client::nonblocking::rpc_client::RpcClient as SolanaRpcClient;
-use solana_pubkey::Pubkey;
-use triton_sdk::{config::AccountSyncConfig, nonblocking::rpc_client::RpcClient};
+use triton_sdk::{
+    AccountSyncConfig, AccountSyncError, ClientError, ConfigError, Pubkey, RpcClient,
+};
 
 #[derive(Debug, thiserror::Error)]
 enum ExampleError {
     #[error(transparent)]
-    Config(#[from] triton_sdk::error::ConfigError),
+    Config(#[from] ConfigError),
     #[error(transparent)]
-    Client(#[from] solana_rpc_client_api::client_error::Error),
+    Client(#[from] ClientError),
     #[error(transparent)]
-    AccountSync(#[from] triton_sdk::error::AccountSyncError),
+    AccountSync(#[from] AccountSyncError),
 }
 
 #[tokio::main]
 async fn main() -> Result<(), ExampleError> {
-    let client = RpcClient::with_account_sync(
-        SolanaRpcClient::new("http://localhost:8899".into()),
-        AccountSyncConfig {
+    let client =
+        RpcClient::new("http://localhost:8899".into()).with_account_sync(AccountSyncConfig {
             endpoint: "http://localhost:10000".into(),
             ..Default::default()
-        },
-    )?;
+        })?;
     let key = Pubkey::new_from_array([2; 32]);
     let account = client
         .get_account_with_commitment(&key, client.commitment())

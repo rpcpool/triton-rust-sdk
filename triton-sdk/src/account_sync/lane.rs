@@ -23,27 +23,17 @@ use crate::config::AccountSyncConfig;
 pub(crate) enum Command {
     Read {
         keys: Vec<Pubkey>,
-        generations: oneshot::Sender<(Vec<u64>, u64)>,
+        ready: oneshot::Sender<()>,
         result: oneshot::Sender<Vec<CachedAccount>>,
     },
     Rpc {
         key: Pubkey,
-        generation: u64,
-        session: u64,
         account: Option<Account>,
         slot: u64,
     },
     Snapshot {
         key: Pubkey,
-        generation: u64,
-        session: u64,
-        account: Option<Account>,
-        slot: u64,
-    },
-    SnapshotFailed {
-        key: Pubkey,
-        generation: u64,
-        session: u64,
+        entry: Option<CachedAccount>,
     },
     Session(u64),
     Stream {
@@ -55,15 +45,7 @@ pub(crate) enum Command {
 
 struct Waiter {
     keys: Vec<Pubkey>,
-    generations: Vec<u64>,
     result: oneshot::Sender<Vec<CachedAccount>>,
-}
-
-struct PendingSnapshot {
-    generation: u64,
-    session: u64,
-    rpc: Option<CachedAccount>,
-    staged: Option<CachedAccount>,
 }
 
 struct Lane {
@@ -74,7 +56,7 @@ struct Lane {
     cache: Cache,
     pinned: HashSet<Pubkey>,
     dynamic: HashMap<Pubkey, Instant>,
-    pending: HashMap<Pubkey, PendingSnapshot>,
+    snapshots: HashSet<Pubkey>,
     waiters: Vec<Waiter>,
     desired: watch::Sender<HashSet<Pubkey>>,
     session: u64,
@@ -97,7 +79,7 @@ pub(super) fn spawn(
         commands: commands.clone(),
         cache: Cache::default(),
         dynamic: HashMap::new(),
-        pending: HashMap::new(),
+        snapshots: HashSet::new(),
         waiters: Vec::new(),
         desired,
         session: 0,
@@ -140,34 +122,20 @@ impl Lane {
         match command {
             Command::Read {
                 keys,
-                generations,
+                ready,
                 result,
-            } => self.read(keys, generations, result),
-            Command::Rpc {
-                key,
-                generation,
-                session,
-                account,
-                slot,
-            } => {
-                if session != 0 && session == self.session {
-                    self.write_rpc(key, generation, account, slot);
+            } => self.read(keys, ready, result),
+            Command::Rpc { key, account, slot } => self.write_rpc(key, account, slot),
+            Command::Snapshot { key, entry } => {
+                self.snapshots.remove(&key);
+                if let Some(entry) = entry {
+                    self.write(key, entry);
                 }
             }
-            Command::Snapshot {
-                key,
-                generation,
-                session,
-                account,
-                slot,
-            } => self.snapshot(key, generation, session, account, slot),
-            Command::SnapshotFailed {
-                key,
-                generation,
-                session,
-            } => self.snapshot_failed(key, generation, session),
             Command::Session(session) => self.set_session(session),
-            Command::Stream { session, account } if session == self.session => self.stream(account),
+            Command::Stream { session, account } if session != 0 && session == self.session => {
+                self.stream(account);
+            }
             Command::Stream { .. } => {}
             Command::Pinned(keys) => self.set_pinned(keys),
         }
@@ -176,14 +144,11 @@ impl Lane {
     fn read(
         &mut self,
         keys: Vec<Pubkey>,
-        generations: oneshot::Sender<(Vec<u64>, u64)>,
+        ready: oneshot::Sender<()>,
         result: oneshot::Sender<Vec<CachedAccount>>,
     ) {
-        let mut ids = Vec::with_capacity(keys.len());
         let mut changed = false;
         for key in &keys {
-            let generation = self.cache.generation(*key);
-            ids.push(generation);
             if self.config.automatic_subscriptions && !self.pinned.contains(key) {
                 let expiry = Instant::now() + self.config.dynamic_subscription_lifetime;
                 changed |= self.dynamic.insert(*key, expiry).is_none();
@@ -193,167 +158,69 @@ impl Lane {
             self.refresh_desired();
         }
         if self.session != 0 {
-            for (key, generation) in keys.iter().zip(&ids) {
-                if self.pinned.contains(key) || self.dynamic.contains_key(key) {
-                    self.start_snapshot(*key, *generation);
+            for key in &keys {
+                if self.wanted(key) {
+                    self.start_snapshot(*key);
                 }
             }
         }
-        if let Some(accounts) = self.complete(&keys, &ids) {
+        if let Some(accounts) = self.complete(&keys) {
             let _ = result.send(accounts);
         } else {
-            self.waiters.push(Waiter {
-                keys,
-                generations: ids.clone(),
-                result,
-            });
+            self.waiters.push(Waiter { keys, result });
         }
-        let _ = generations.send((ids, self.session));
+        let _ = ready.send(());
     }
 
-    fn start_snapshot(&mut self, key: Pubkey, generation: u64) {
+    fn start_snapshot(&mut self, key: Pubkey) {
         if self.session == 0 {
             return;
         }
-        if self.cache.get(&key).is_some() || self.pending.contains_key(&key) {
+        if self.cache.get(&key).is_some() || !self.snapshots.insert(key) {
             return;
         }
-        self.pending.insert(
-            key,
-            PendingSnapshot {
-                generation,
-                session: self.session,
-                rpc: None,
-                staged: None,
-            },
-        );
         let inner = self.inner.clone();
         let commands = self.commands.clone();
         let commitment = self.commitment;
-        let session = self.session;
         let cancel = self.cancel.clone();
         tokio::spawn(async move {
             let response = tokio::select! {
                 _ = cancel.cancelled() => return,
                 response = inner.get_account_with_commitment(&key, commitment) => response,
             };
-            let command = match response {
-                Ok(response) => Command::Snapshot {
-                    key,
-                    generation,
-                    session,
-                    account: response.value,
-                    slot: response.context.slot,
-                },
-                Err(_) => Command::SnapshotFailed {
-                    key,
-                    generation,
-                    session,
-                },
-            };
-            let _ = commands.send(command).await;
+            let entry = response.ok().map(|response| CachedAccount {
+                account: response.value,
+                slot: response.context.slot,
+                version: 0,
+                stream: false,
+            });
+            let _ = commands.send(Command::Snapshot { key, entry }).await;
         });
-    }
-
-    fn snapshot(
-        &mut self,
-        key: Pubkey,
-        generation: u64,
-        session: u64,
-        account: Option<Account>,
-        slot: u64,
-    ) {
-        if self.session != session
-            || !self.pending.get(&key).is_some_and(|pending| {
-                pending.generation == generation && pending.session == session
-            })
-        {
-            return;
-        }
-        let Some(pending) = self.pending.remove(&key) else {
-            return;
-        };
-        self.write_rpc(key, generation, account, slot);
-        if let Some(rpc) = pending.rpc {
-            self.write(key, rpc);
-        }
-        if let Some(staged) = pending.staged {
-            self.write(key, staged);
-        }
-    }
-
-    fn snapshot_failed(&mut self, key: Pubkey, generation: u64, session: u64) {
-        if self.session != session
-            || !self.pending.get(&key).is_some_and(|pending| {
-                pending.generation == generation && pending.session == session
-            })
-        {
-            return;
-        }
-        let Some(pending) = self.pending.remove(&key) else {
-            return;
-        };
-        if let Some(rpc) = pending.rpc {
-            self.write(key, rpc);
-        }
-        if let Some(staged) = pending.staged {
-            self.write(key, staged);
-        }
     }
 
     fn stream(&mut self, update: StreamAccount) {
         let key = update.key;
-        if !self.pinned.contains(&key) && !self.dynamic.contains_key(&key) {
-            return;
-        }
-        let generation = self.cache.generation(key);
         let entry = CachedAccount {
             account: Some(update.account),
             slot: update.slot,
             version: update.version,
-            generation,
             stream: true,
         };
-        if let Some(pending) = self.pending.get_mut(&key)
-            && pending.generation == generation
-        {
-            if pending
-                .staged
-                .as_ref()
-                .is_none_or(|old| (entry.slot, entry.version) > (old.slot, old.version))
-            {
-                pending.staged = Some(entry);
-            }
-            return;
-        }
         self.write(key, entry);
     }
 
-    fn write_rpc(&mut self, key: Pubkey, generation: u64, account: Option<Account>, slot: u64) {
-        if !self.pinned.contains(&key) && !self.dynamic.contains_key(&key) {
-            return;
-        }
+    fn write_rpc(&mut self, key: Pubkey, account: Option<Account>, slot: u64) {
         let entry = CachedAccount {
             account,
             slot,
             version: 0,
-            generation,
             stream: false,
         };
-        if let Some(pending) = self.pending.get_mut(&key)
-            && pending.generation == generation
-            && pending.session == self.session
-        {
-            if pending.rpc.as_ref().is_none_or(|old| entry.slot > old.slot) {
-                pending.rpc = Some(entry);
-            }
-            return;
-        }
         self.write(key, entry);
     }
 
     fn write(&mut self, key: Pubkey, entry: CachedAccount) {
-        if !self.cache.write(key, entry) {
+        if !self.wanted(&key) || !self.cache.write(key, entry) {
             return;
         }
         let waiters = std::mem::take(&mut self.waiters);
@@ -361,7 +228,7 @@ impl Lane {
             if waiter.result.is_closed() {
                 continue;
             }
-            if let Some(values) = self.complete(&waiter.keys, &waiter.generations) {
+            if let Some(values) = self.complete(&waiter.keys) {
                 let _ = waiter.result.send(values);
             } else {
                 self.waiters.push(waiter);
@@ -369,16 +236,18 @@ impl Lane {
         }
     }
 
-    fn complete(&self, keys: &[Pubkey], generations: &[u64]) -> Option<Vec<CachedAccount>> {
+    fn complete(&self, keys: &[Pubkey]) -> Option<Vec<CachedAccount>> {
         keys.iter()
-            .zip(generations)
-            .map(|(key, generation)| {
-                self.cache
-                    .get(key)
-                    .filter(|entry| entry.generation == *generation)
-                    .cloned()
-            })
+            .map(|key| self.cache.get(key).cloned())
             .collect()
+    }
+
+    fn wanted(&self, key: &Pubkey) -> bool {
+        self.pinned.contains(key)
+            || self
+                .dynamic
+                .get(key)
+                .is_some_and(|expiry| *expiry > Instant::now())
     }
 
     fn set_pinned(&mut self, keys: HashSet<Pubkey>) {
@@ -400,8 +269,7 @@ impl Lane {
             .collect();
         if self.session != 0 {
             for key in wanted {
-                let generation = self.cache.generation(key);
-                self.start_snapshot(key, generation);
+                self.start_snapshot(key);
             }
         }
         self.refresh_desired();
@@ -411,12 +279,11 @@ impl Lane {
         let stale: Vec<_> = self
             .cache
             .keys()
-            .filter(|key| !self.pinned.contains(key) && !self.dynamic.contains_key(key))
+            .filter(|key| !self.wanted(key))
             .copied()
             .collect();
         for key in stale {
             self.cache.remove(&key);
-            self.pending.remove(&key);
         }
     }
 
@@ -430,7 +297,6 @@ impl Lane {
         if *self.desired.borrow() != keys {
             self.session = 0;
             self.cache.clear_entries();
-            self.pending.clear();
             self.desired.send_replace(keys);
         }
     }
@@ -441,7 +307,6 @@ impl Lane {
         }
         self.session = session;
         self.cache.clear_entries();
-        self.pending.clear();
         if session == 0 {
             return;
         }
@@ -452,8 +317,7 @@ impl Lane {
             .copied()
             .collect();
         for key in wanted {
-            let generation = self.cache.generation(key);
-            self.start_snapshot(key, generation);
+            self.start_snapshot(key);
         }
     }
 }
@@ -477,7 +341,7 @@ mod tests {
             cache: Cache::default(),
             pinned: HashSet::new(),
             dynamic: HashMap::new(),
-            pending: HashMap::new(),
+            snapshots: HashSet::new(),
             waiters: Vec::new(),
             desired,
             session: 0,
@@ -489,41 +353,48 @@ mod tests {
     async fn duplicates_renew_one_dynamic_subscription() {
         let mut lane = lane();
         let key = Pubkey::new_unique();
-        let (gen_tx, gen_rx) = oneshot::channel();
+        let (ready_tx, ready_rx) = oneshot::channel();
         let (result_tx, _result_rx) = oneshot::channel();
-        lane.read(vec![key, key], gen_tx, result_tx);
-        let (generations, _) = gen_rx.await.unwrap();
-        assert_eq!(generations, vec![generations[0]; 2]);
+        lane.read(vec![key, key], ready_tx, result_tx);
+        ready_rx.await.unwrap();
         assert_eq!(lane.desired.borrow().len(), 1);
+        lane.write_rpc(key, None, 1);
+        assert!(lane.cache.get(&key).is_some());
         lane.dynamic
             .insert(key, Instant::now() - std::time::Duration::from_secs(1));
         lane.expire_dynamic();
         assert!(lane.desired.borrow().is_empty());
-        assert_ne!(lane.cache.generation(key), generations[0]);
+        assert!(lane.cache.get(&key).is_none());
+        lane.write_rpc(key, None, 2);
+        assert!(lane.cache.get(&key).is_none());
     }
 
     #[tokio::test]
-    async fn pinned_account_survives_dynamic_expiry_and_readd_gets_new_generation() {
+    async fn pinned_account_survives_dynamic_expiry_and_removal_drops_cache() {
         let mut lane = lane();
         let key = Pubkey::new_unique();
         lane.set_pinned(HashSet::from([key]));
-        let first = lane.cache.generation(key);
+        lane.write_rpc(key, None, 1);
         lane.dynamic
             .insert(key, Instant::now() - std::time::Duration::from_secs(1));
         lane.expire_dynamic();
         assert!(lane.desired.borrow().contains(&key));
+        assert!(lane.cache.get(&key).is_some());
         lane.set_pinned(HashSet::new());
         assert!(lane.desired.borrow().is_empty());
+        assert!(lane.cache.get(&key).is_none());
+        lane.write_rpc(key, None, 2);
+        assert!(lane.cache.get(&key).is_none());
         lane.set_pinned(HashSet::from([key]));
-        assert_ne!(lane.cache.generation(key), first);
+        lane.write_rpc(key, None, 2);
+        assert_eq!(lane.cache.get(&key).unwrap().slot, 2);
     }
 
     #[tokio::test]
-    async fn stages_stream_update_after_snapshot_and_rejects_old_session() {
+    async fn stream_is_available_before_snapshot_and_rejects_old_session() {
         let mut lane = lane();
         let key = Pubkey::new_unique();
         lane.set_pinned(HashSet::from([key]));
-        let first = lane.cache.generation(key);
         lane.set_session(1);
         let account = Account {
             lamports: 10,
@@ -538,17 +409,18 @@ mod tests {
                 version: 2,
             },
         });
-        assert!(lane.cache.get(&key).is_none());
-        lane.snapshot(
+        assert_eq!(lane.cache.get(&key).unwrap().slot, 12);
+        assert!(lane.snapshots.contains(&key));
+        lane.handle(Command::Snapshot {
             key,
-            first,
-            1,
-            Some(Account {
-                lamports: 5,
-                ..Default::default()
+            entry: Some(CachedAccount {
+                account: None,
+                slot: 11,
+                version: 0,
+                stream: false,
             }),
-            11,
-        );
+        });
+        assert!(!lane.snapshots.contains(&key));
         assert_eq!(lane.cache.get(&key).map(|entry| entry.slot), Some(12));
         assert_eq!(
             lane.cache
@@ -560,7 +432,6 @@ mod tests {
 
         lane.set_pinned(HashSet::new());
         lane.set_pinned(HashSet::from([key]));
-        let second = lane.cache.generation(key);
         lane.set_session(2);
         lane.handle(Command::Stream {
             session: 1,
@@ -571,43 +442,34 @@ mod tests {
                 version: 1,
             },
         });
-        lane.snapshot(key, first, 1, None, 21);
-        assert_ne!(first, second);
         assert!(lane.cache.get(&key).is_none());
-        assert_eq!(
-            lane.pending.get(&key).map(|pending| pending.generation),
-            Some(second)
-        );
+        assert!(lane.snapshots.contains(&key));
     }
 
     #[tokio::test]
-    async fn rpc_observation_waits_for_snapshot() {
+    async fn rpc_observation_is_available_before_snapshot() {
         let mut lane = lane();
         let key = Pubkey::new_unique();
         lane.set_pinned(HashSet::from([key]));
-        let generation = lane.cache.generation(key);
         lane.set_session(1);
         lane.handle(Command::Rpc {
             key,
-            generation,
-            session: 1,
             account: Some(Account {
                 lamports: 11,
                 ..Default::default()
             }),
             slot: 12,
         });
-        assert!(lane.cache.get(&key).is_none());
-        lane.snapshot(
+        assert_eq!(lane.cache.get(&key).unwrap().slot, 12);
+        lane.handle(Command::Snapshot {
             key,
-            generation,
-            1,
-            Some(Account {
-                lamports: 5,
-                ..Default::default()
+            entry: Some(CachedAccount {
+                account: None,
+                slot: 11,
+                version: 0,
+                stream: false,
             }),
-            11,
-        );
+        });
         assert_eq!(
             lane.cache
                 .get(&key)
@@ -615,5 +477,100 @@ mod tests {
                 .map(|account| account.lamports),
             Some(11)
         );
+    }
+
+    #[tokio::test]
+    async fn snapshots_retry_after_failure_without_duplicate_calls() {
+        let mut lane = lane();
+        let (commands, mut receiver) = mpsc::channel(256);
+        lane.commands = commands;
+        lane.inner = Arc::new(SolanaRpcClient::new_mock("fails".into()));
+        let key = Pubkey::new_unique();
+        lane.set_pinned(HashSet::from([key]));
+        lane.set_session(1);
+        lane.expire_dynamic();
+        lane.start_snapshot(key);
+        let failed = receiver.recv().await.unwrap();
+        assert!(matches!(&failed, Command::Snapshot { entry: None, .. }));
+        assert!(receiver.try_recv().is_err());
+        assert!(lane.snapshots.contains(&key));
+        lane.handle(failed);
+        assert!(!lane.snapshots.contains(&key));
+        lane.inner = Arc::new(SolanaRpcClient::new_mock("succeeds".into()));
+        lane.expire_dynamic();
+        assert!(lane.snapshots.contains(&key));
+        lane.handle(receiver.recv().await.unwrap());
+        assert!(!lane.snapshots.contains(&key));
+        assert!(lane.cache.get(&key).unwrap().account.is_none());
+    }
+
+    #[tokio::test]
+    async fn multiple_read_waits_for_every_key_and_preserves_duplicates() {
+        let mut lane = lane();
+        let first = Pubkey::new_unique();
+        let second = Pubkey::new_unique();
+        lane.set_pinned(HashSet::from([first, second]));
+        let account = Account {
+            lamports: 42,
+            ..Default::default()
+        };
+        lane.write_rpc(first, Some(account.clone()), 12);
+        let (ready, _) = oneshot::channel();
+        let (result, mut response) = oneshot::channel();
+        lane.read(vec![first, second, first], ready, result);
+        assert!(matches!(
+            response.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        lane.write_rpc(second, None, 7);
+        let values = response.await.unwrap();
+        assert_eq!(values.len(), 3);
+        assert_eq!(values[0].account, Some(account.clone()));
+        assert!(values[1].account.is_none());
+        assert_eq!(values[2].account, Some(account));
+        let (ready, _) = oneshot::channel();
+        let (result, mut response) = oneshot::channel();
+        lane.read(vec![second], ready, result);
+        assert!(response.try_recv().unwrap()[0].account.is_none());
+    }
+
+    #[tokio::test]
+    async fn removing_pinned_keeps_active_temporary_subscription() {
+        let mut lane = lane();
+        let key = Pubkey::new_unique();
+        lane.set_pinned(HashSet::from([key]));
+        lane.dynamic
+            .insert(key, Instant::now() + std::time::Duration::from_secs(60));
+        lane.write_rpc(key, None, 1);
+        lane.set_pinned(HashSet::new());
+        assert!(lane.cache.get(&key).is_some());
+        assert!(lane.desired.borrow().contains(&key));
+    }
+
+    #[test]
+    fn expired_or_unsubscribed_accounts_reject_all_writes() {
+        let mut lane = lane();
+        let key = Pubkey::new_unique();
+        lane.dynamic
+            .insert(key, Instant::now() - std::time::Duration::from_secs(1));
+        lane.write_rpc(key, None, 1);
+        lane.stream(StreamAccount {
+            key,
+            account: Account::default(),
+            slot: 2,
+            version: 1,
+        });
+        lane.snapshots.insert(key);
+        lane.handle(Command::Snapshot {
+            key,
+            entry: Some(CachedAccount {
+                account: None,
+                slot: 3,
+                version: 0,
+                stream: false,
+            }),
+        });
+        assert!(lane.cache.get(&key).is_none());
+        assert!(!lane.snapshots.contains(&key));
     }
 }

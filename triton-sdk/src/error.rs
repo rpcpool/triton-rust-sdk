@@ -14,8 +14,6 @@ pub enum ConfigError {
 
 #[derive(Debug, Error)]
 pub enum AccountSyncError {
-    #[error("account-sync is not configured")]
-    NotConfigured,
     #[error("account-sync runtime is closed")]
     Closed,
     #[error("account-sync operation requires a Tokio runtime")]
