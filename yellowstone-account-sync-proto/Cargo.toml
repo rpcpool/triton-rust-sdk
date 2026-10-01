@@ -2,7 +2,7 @@
 name = "yellowstone-account-sync-proto"
 version = "0.1.0"
 edition = "2021"
-publish = false
+publish = true
 
 [lib]
 doctest = false
