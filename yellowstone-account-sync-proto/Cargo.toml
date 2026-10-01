@@ -2,6 +2,11 @@
 name = "yellowstone-account-sync-proto"
 version = "0.1.0"
 edition = "2021"
+description = "Protocol definitions for Yellowstone account sync"
+license-file.workspace = true
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
 publish = true
 
 [lib]
