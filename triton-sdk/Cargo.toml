@@ -3,4 +3,24 @@ name = "triton-sdk"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+doctest = false
+
 [dependencies]
+solana-client = { workspace = true }
+solana-account = { workspace = true }
+solana-commitment-config = { workspace = true }
+solana-pubkey = { workspace = true }
+solana-rpc-client-api = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-stream = { workspace = true }
+thiserror = { workspace = true }
+tonic = { workspace = true }
+url = { workspace = true }
+yellowstone-account-sync-proto = { workspace = true }
+
+[dev-dependencies]
+sha2 = "0.10"
+tokio = { workspace = true, features = ["signal", "net"] }
+tokio-stream = { workspace = true, features = ["net"] }

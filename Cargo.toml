@@ -15,6 +15,16 @@ keywords = ["solana", "account-sync", "yellowstone", "grpc"]
 publish = false
 
 [workspace.dependencies]
+solana-client = "=4.3.0"
+solana-account = "4.5.0"
+solana-commitment-config = "3.1.1"
+solana-pubkey = "4.3.0"
+solana-rpc-client-api = "=4.3.0"
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tokio-stream = "0.1"
+thiserror = "2"
+url = "2"
 prost = "0.14.3"
 prost-types = "0.14.3"
 tonic = { version = "0.14.0", features = ["transport", "gzip", "zstd", "tls-native-roots", "tls-ring"] }
@@ -22,3 +32,4 @@ tonic-prost = "0.14.3"
 yellowstone-grpc-proto = "12.5.0"
 protoc-bin-vendored = "3.2.0"
 tonic-prost-build = "0.14.3"
+yellowstone-account-sync-proto = { path = "yellowstone-account-sync-proto" }
