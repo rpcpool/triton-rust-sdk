@@ -5662,6 +5662,7 @@ dependencies = [
 name = "triton-sdk"
 version = "0.1.0"
 dependencies = [
+ "sha2 0.10.9",
  "solana-account",
  "solana-client",
  "solana-commitment-config",
@@ -5672,6 +5673,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tonic",
+ "url",
  "yellowstone-account-sync-proto",
 ]
 

@@ -324,7 +324,7 @@ mod tests {
         }
         assert!(matches!(
             RpcClient::new(url.into()).with_account_sync(AccountSyncConfig::default()),
-            Err(ConfigError::EndpointScheme(_))
+            Err(ConfigError::EndpointUrl(_))
         ));
     }
 

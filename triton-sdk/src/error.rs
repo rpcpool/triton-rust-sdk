@@ -2,8 +2,14 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("account-sync endpoint must use http or https: {0}")]
-    EndpointScheme(String),
+    #[error("account-sync endpoint must use http or https")]
+    EndpointScheme,
+    #[error("invalid account-sync endpoint URL")]
+    EndpointUrl(#[source] url::ParseError),
+    #[error("invalid account-sync endpoint path: expected no path or /<token>")]
+    EndpointPath,
+    #[error("account-sync token is not valid gRPC metadata")]
+    EndpointToken,
     #[error("invalid account-sync endpoint")]
     Endpoint(#[source] tonic::transport::Error),
     #[error("account-sync setting must be nonzero: {0}")]
@@ -14,6 +20,8 @@ pub enum ConfigError {
 
 #[derive(Debug, Error)]
 pub enum AccountSyncError {
+    #[error("invalid account-sync configuration")]
+    Config(#[from] ConfigError),
     #[error("account-sync runtime is closed")]
     Closed,
     #[error("account-sync operation requires a Tokio runtime")]

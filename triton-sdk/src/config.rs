@@ -2,7 +2,7 @@ use std::{collections::HashSet, time::Duration};
 
 use solana_pubkey::Pubkey;
 
-use crate::error::ConfigError;
+use crate::{account_sync::endpoint::GrpcEndpoint, error::ConfigError};
 
 #[derive(Clone, Debug)]
 pub struct AccountSyncConfig {
@@ -47,11 +47,7 @@ impl Default for AccountSyncConfig {
 
 impl AccountSyncConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if !self.endpoint.starts_with("http://") && !self.endpoint.starts_with("https://") {
-            return Err(ConfigError::EndpointScheme(self.endpoint.clone()));
-        }
-        tonic::transport::Endpoint::from_shared(self.endpoint.clone())
-            .map_err(ConfigError::Endpoint)?;
+        GrpcEndpoint::parse(&self.endpoint)?;
         for (name, duration) in [
             ("cache_miss_wait", self.cache_miss_wait),
             ("subscription_refresh", self.subscription_refresh),
@@ -98,11 +94,30 @@ mod tests {
     }
 
     #[test]
+    fn validates_url_and_authentication_before_starting_transport() {
+        for endpoint in ["example.com/token", "localhost:10000/token"] {
+            assert!(
+                AccountSyncConfig {
+                    endpoint: endpoint.into(),
+                    ..Default::default()
+                }
+                .validate()
+                .is_ok()
+            );
+        }
+        let config = AccountSyncConfig {
+            endpoint: "https://example.com/token/extra".into(),
+            ..Default::default()
+        };
+        assert!(matches!(config.validate(), Err(ConfigError::EndpointPath)));
+    }
+
+    #[test]
     fn rejects_bad_endpoint_and_zero_limit() {
         let mut config = AccountSyncConfig::default();
         assert!(matches!(
             config.validate(),
-            Err(ConfigError::EndpointScheme(_))
+            Err(ConfigError::EndpointUrl(_))
         ));
         config.endpoint = "http://example.com".into();
         config.max_decoded_message_size = 0;

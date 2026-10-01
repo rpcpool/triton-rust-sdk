@@ -8,13 +8,13 @@ use tokio::{
     time::sleep,
 };
 use tokio_util::sync::CancellationToken;
-use tonic::transport::{Channel, Endpoint};
+use tonic::transport::Channel;
 use yellowstone_account_sync_proto::{
     account_sync::yellowstone_account_sync_grpc_service_client::YellowstoneAccountSyncGrpcServiceClient,
     geyser::{self, subscribe_update::UpdateOneof},
 };
 
-use super::lane::Command;
+use super::{endpoint::GrpcEndpoint, lane::Command};
 use crate::{config::AccountSyncConfig, error::AccountSyncError};
 
 pub(crate) struct StreamAccount {
@@ -76,7 +76,9 @@ async fn stream_once(
     commands: &mpsc::Sender<Command>,
     cancel: &CancellationToken,
 ) -> Result<(), AccountSyncError> {
-    let endpoint = Endpoint::from_shared(config.endpoint.clone())?
+    let parsed = GrpcEndpoint::parse(&config.endpoint)?;
+    let endpoint = parsed
+        .endpoint
         .connect_timeout(config.connect_timeout)
         .initial_connection_window_size(config.http2_window_size)
         .initial_stream_window_size(config.http2_window_size)
@@ -97,9 +99,13 @@ async fn stream_once(
         .send(request)
         .await
         .map_err(|_| AccountSyncError::ChannelClosed)?;
+    let mut request = tonic::Request::new(tokio_stream::wrappers::ReceiverStream::new(request_rx));
+    if let Some(token) = parsed.token {
+        request.metadata_mut().insert("x-token", token);
+    }
     let response = tokio::select! {
         _ = cancel.cancelled() => return Ok(()),
-        result = client.subscribe(tokio_stream::wrappers::ReceiverStream::new(request_rx)) => result?,
+        result = client.subscribe(request) => result?,
     };
     let mut stream = response.into_inner();
     commands
@@ -161,7 +167,104 @@ fn decode_account(update: geyser::SubscribeUpdate) -> Option<StreamAccount> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use tokio_stream::wrappers::TcpListenerStream;
+    use yellowstone_account_sync_proto::account_sync::yellowstone_account_sync_grpc_service_server::{
+        YellowstoneAccountSyncGrpcService, YellowstoneAccountSyncGrpcServiceServer,
+    };
+
     use super::*;
+
+    struct TestService {
+        received: mpsc::Sender<(tonic::metadata::MetadataMap, geyser::SubscribeRequest)>,
+    }
+
+    #[tonic::async_trait]
+    impl YellowstoneAccountSyncGrpcService for TestService {
+        type SubscribeStream = tokio_stream::Empty<Result<geyser::SubscribeUpdate, tonic::Status>>;
+
+        async fn subscribe(
+            &self,
+            request: tonic::Request<tonic::Streaming<geyser::SubscribeRequest>>,
+        ) -> Result<tonic::Response<Self::SubscribeStream>, tonic::Status> {
+            let metadata = request.metadata().clone();
+            let first = request.into_inner().message().await?.unwrap();
+            self.received.send((metadata, first)).await.unwrap();
+            // An empty response stream forces the client to reconnect.
+            Ok(tonic::Response::new(tokio_stream::empty()))
+        }
+    }
+
+    async fn check_subscription_metadata(path: &str, token: Option<&str>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (received_tx, mut received) = mpsc::channel(8);
+        let cancel = CancellationToken::new();
+        let server = tokio::spawn(
+            tonic::transport::Server::builder()
+                .add_service(YellowstoneAccountSyncGrpcServiceServer::new(TestService {
+                    received: received_tx,
+                }))
+                .serve_with_incoming_shutdown(
+                    TcpListenerStream::new(listener),
+                    cancel.clone().cancelled_owned(),
+                ),
+        );
+        let config = AccountSyncConfig {
+            endpoint: format!("{address}{path}"),
+            reconnect_min_delay: Duration::from_millis(1),
+            ..Default::default()
+        };
+        config.validate().unwrap();
+        let key = Pubkey::new_from_array([1; 32]);
+        let (_desired_tx, desired) = watch::channel(HashSet::from([key]));
+        let (commands, mut command_rx) = mpsc::channel(8);
+        let client = tokio::spawn(run(
+            config,
+            CommitmentConfig::confirmed(),
+            desired,
+            commands,
+            cancel.clone(),
+        ));
+        let outcome = tokio::time::timeout(Duration::from_secs(5), async {
+            for session in 1..=2 {
+                let (metadata, request) = received.recv().await.unwrap();
+                assert_eq!(
+                    metadata.get("x-token").map(|value| value.to_str().unwrap()),
+                    token
+                );
+                assert_eq!(request.accounts["accounts"].account, [key.to_string()]);
+                assert_eq!(
+                    request.commitment,
+                    Some(geyser::CommitmentLevel::Confirmed as i32)
+                );
+                assert!(
+                    matches!(command_rx.recv().await, Some(Command::Session(id)) if id == session)
+                );
+                assert!(matches!(command_rx.recv().await, Some(Command::Session(0))));
+            }
+        })
+        .await;
+        cancel.cancel();
+        client.await.unwrap();
+        server.await.unwrap().unwrap();
+        outcome.expect("subscription or reconnect timed out");
+    }
+
+    #[tokio::test]
+    async fn sends_path_token_on_initial_subscription_and_reconnect() {
+        check_subscription_metadata(
+            "//test%2Ftoken///?ignored=yes#fragment",
+            Some("test%2Ftoken"),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn omits_token_on_initial_subscription_and_reconnect_without_path() {
+        check_subscription_metadata("/?token=ignored#fragment", None).await;
+    }
 
     #[test]
     fn request_uses_full_account_set_and_commitment() {

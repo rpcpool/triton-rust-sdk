@@ -17,4 +17,10 @@ tokio-util = { workspace = true }
 tokio-stream = { workspace = true }
 thiserror = { workspace = true }
 tonic = { workspace = true }
+url = { workspace = true }
 yellowstone-account-sync-proto = { workspace = true }
+
+[dev-dependencies]
+sha2 = "0.10"
+tokio = { workspace = true, features = ["signal", "net"] }
+tokio-stream = { workspace = true, features = ["net"] }
