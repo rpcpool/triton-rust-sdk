@@ -9,8 +9,10 @@ members = [
 authors = ["Triton One"]
 edition = "2021"
 homepage = "https://triton.one"
+documentation = "https://docs.triton.one"
 repository = "https://github.com/rpcpool/triton-rust-sdk"
-license = "APACHE-2.0"
+license = "Apache-2.0"
+license-file = "LICENSE.md"
 keywords = ["solana", "account-sync", "yellowstone", "grpc"]
 publish = false
 
@@ -32,4 +34,4 @@ tonic-prost = "0.14.3"
 yellowstone-grpc-proto = "12.5.0"
 protoc-bin-vendored = "3.2.0"
 tonic-prost-build = "0.14.3"
-yellowstone-account-sync-proto = { path = "yellowstone-account-sync-proto" }
+yellowstone-account-sync-proto = { path = "yellowstone-account-sync-proto", version = "0.1.0" }
