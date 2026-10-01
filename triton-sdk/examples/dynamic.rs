@@ -1,32 +1,42 @@
-use triton_sdk::{
-    AccountSyncConfig, AccountSyncError, ClientError, ConfigError, Pubkey, RpcClient,
-};
+use std::{env, error::Error, time::Duration};
 
-#[derive(Debug, thiserror::Error)]
-enum ExampleError {
-    #[error(transparent)]
-    Config(#[from] ConfigError),
-    #[error(transparent)]
-    Client(#[from] ClientError),
-    #[error(transparent)]
-    AccountSync(#[from] AccountSyncError),
-}
+use triton_sdk::{AccountSyncConfig, ClientError, CommitmentConfig, Pubkey, RpcClient};
 
-#[tokio::main]
-async fn main() -> Result<(), ExampleError> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let key: Pubkey = "So11111111111111111111111111111111111111112".parse()?;
+    let config = AccountSyncConfig {
+        endpoint: env::var("ACCOUNT_SYNC_URL")?,
+        dynamic_subscription_lifetime: Duration::from_secs(2),
+        ..Default::default()
+    };
+    let wait = config.dynamic_subscription_lifetime
+        + config.subscription_refresh
+        + Duration::from_millis(100);
     let client =
-        RpcClient::new("http://localhost:8899".into()).with_account_sync(AccountSyncConfig {
-            endpoint: "http://localhost:10000".into(),
-            ..Default::default()
-        })?;
-    let key = Pubkey::new_from_array([2; 32]);
-    let account = client
-        .get_account_with_commitment(&key, client.commitment())
-        .await?;
-    println!(
-        "account at slot {}: {:?}",
-        account.context.slot, account.value
-    );
-    client.close().await?;
+        RpcClient::new_with_commitment(env::var("RPC_URL")?, CommitmentConfig::confirmed())
+            .with_account_sync(config)?;
+
+    let result = async {
+        for read in 1..=2 {
+            let response = client
+                .get_account_with_commitment(&key, client.commitment())
+                .await?;
+            println!(
+                "read={read} slot={} present={}",
+                response.context.slot,
+                response.value.is_some()
+            );
+            if read == 1 {
+                println!("waiting {wait:?} before renewing the temporary subscription");
+                tokio::time::sleep(wait).await;
+            }
+        }
+        Ok::<_, ClientError>(())
+    }
+    .await;
+    let closed = client.close().await;
+    result?;
+    closed?;
     Ok(())
 }
