@@ -2,6 +2,11 @@
 name = "triton-sdk"
 version = "0.1.0"
 edition = "2024"
+description = "Rust SDK for Triton One RPC and streaming services."
+license-file.workspace = true
+documentation.workspace = true
+homepage.workspace = true
+repository.workspace = true
 
 [lib]
 doctest = false

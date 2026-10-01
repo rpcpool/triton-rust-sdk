@@ -8,6 +8,7 @@ setup-submodules:
 	git -C $(YELLOWSTONE_GRPC_DIR) checkout $(YELLOWSTONE_GRPC_TAG)
 	git -C $(YELLOWSTONE_GRPC_DIR) sparse-checkout init --cone
 	git -C $(YELLOWSTONE_GRPC_DIR) sparse-checkout set yellowstone-grpc-proto
+	find "$(YELLOWSTONE_GRPC_DIR)" -name .git -prune -o -type f ! -name '*.proto' -exec rm -f {} +
 
 clean:
 	rm -rf target

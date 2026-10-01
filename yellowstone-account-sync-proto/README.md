@@ -1,0 +1,1 @@
+## Proto definitions for Yellowstone Account Sync
