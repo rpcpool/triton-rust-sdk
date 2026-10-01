@@ -27,7 +27,17 @@ Run the commands below from the repository root.
 
 Configured reads can return cached accounts or fall back to RPC. A successful read does not prove that the stream is connected or that the cache supplied the result. A buffered batch preserves order and duplicates; its context slot is the lowest cached slot in that batch.
 
+The four short examples fail if a required URL is missing or empty, an SDK call fails, or an expected account is missing. The multiple-account example also checks the result count and duplicate values. The lifecycle example checks each pinned set and reads the replacement account. Errors name the failed operation. Account-read errors omit the underlying error text because it can contain endpoint credentials.
+
 The temporary subscription example shows how to renew an idle subscription with another read. Its output does not expose or prove cache eviction. Pinned accounts stay subscribed until removed. Removing a pin can leave an existing temporary subscription active; the lifecycle example disables automatic subscriptions to keep this distinction simple. A rapid remove-and-re-add can accept a result from an earlier RPC request if it passes the cache slot rules.
+
+## GitHub Actions
+
+The [SDK examples workflow](../../.github/workflows/sdk-e2e.yml) runs on pull requests, pushes to `main`, and manual dispatch. Set `RPC_URL` and `ACCOUNT_SYNC_URL` as repository Actions secrets. Both endpoints must be reachable from a GitHub-hosted runner and serve the same cluster. The streaming endpoint must support Yellowstone Account Sync.
+
+The workflow runs local tests and builds all examples with the pinned Rust toolchain and protobuf submodule. It then runs the four short examples in order, with a 60-second limit per example. The first error or timeout stops the remaining examples. Missing or empty secrets fail before the build. Fork and Dependabot pull requests run local tests and build the examples, but skip live checks.
+
+The timing example is built but not run in CI because it runs until interrupted. Live checks exercise SDK usage and returned results; RPC fallback means they do not prove stream delivery.
 
 ## Read timing comparison
 

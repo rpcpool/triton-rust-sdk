@@ -1,0 +1,65 @@
+name: SDK examples
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+      RPC_URL: ${{ secrets.RPC_URL }}
+      ACCOUNT_SYNC_URL: ${{ secrets.ACCOUNT_SYNC_URL }}
+      RUN_LIVE: ${{ github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    steps:
+      - name: Check endpoint secrets
+        if: env.RUN_LIVE == 'true'
+        shell: bash
+        run: |
+          if [[ -z "${RPC_URL//[[:space:]]/}" ]]; then
+            echo '::error::RPC_URL secret must be set and nonempty'
+            exit 1
+          fi
+          if [[ -z "${ACCOUNT_SYNC_URL//[[:space:]]/}" ]]; then
+            echo '::error::ACCOUNT_SYNC_URL secret must be set and nonempty'
+            exit 1
+          fi
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          submodules: true
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+
+      - name: Run local tests
+        run: cargo test --locked --workspace --lib
+
+      - name: Build examples
+        run: cargo build --locked -p triton-sdk --examples
+
+      - name: Run pinned account example
+        if: env.RUN_LIVE == 'true'
+        run: timeout --kill-after=5s 60s target/debug/examples/pinned
+
+      - name: Run dynamic subscription example
+        if: env.RUN_LIVE == 'true'
+        run: timeout --kill-after=5s 60s target/debug/examples/dynamic
+
+      - name: Run multiple accounts example
+        if: env.RUN_LIVE == 'true'
+        run: timeout --kill-after=5s 60s target/debug/examples/get_multiple_accounts_grpc
+
+      - name: Run account lifecycle example
+        if: env.RUN_LIVE == 'true'
+        run: timeout --kill-after=5s 60s target/debug/examples/account_lifecycle_grpc
