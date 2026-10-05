@@ -6136,9 +6136,9 @@ dependencies = [
 
 [[package]]
 name = "yellowstone-grpc-proto"
-version = "12.7.0"
+version = "13.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5c845c3eaa82bf075d1e553826e629eda16a74e9fdbe886ec07bd7434d132af"
+checksum = "6c3e496d8fd80a592ee4daea506bfd8c3ce87aeda55055ba88439c8eec6a9a62"
 dependencies = [
  "anyhow",
  "prost",
