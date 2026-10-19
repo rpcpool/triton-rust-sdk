@@ -300,6 +300,7 @@ mod tests {
                 }),
                 slot: 8,
                 is_startup: false,
+                bank_id: Some(9),
             })),
             ..Default::default()
         };

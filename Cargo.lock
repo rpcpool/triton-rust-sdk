@@ -6123,7 +6123,7 @@ dependencies = [
 
 [[package]]
 name = "yellowstone-account-sync-proto"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "prost",
  "prost-types",
@@ -6136,9 +6136,9 @@ dependencies = [
 
 [[package]]
 name = "yellowstone-grpc-proto"
-version = "12.7.0"
+version = "14.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5c845c3eaa82bf075d1e553826e629eda16a74e9fdbe886ec07bd7434d132af"
+checksum = "8f913b2244559b96aa636abf53188a7df450e14a3f8cb5b3e5d3202822759ff4"
 dependencies = [
  "anyhow",
  "prost",

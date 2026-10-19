@@ -1,5 +1,5 @@
 YELLOWSTONE_GRPC_DIR := yellowstone-account-sync-proto/proto/yellowstone-grpc
-YELLOWSTONE_GRPC_TAG := client-v13.3.0
+YELLOWSTONE_GRPC_TAG := v16.1.2+solana.4.3.0
 
 .PHONY: setup-submodules
 setup-submodules:
