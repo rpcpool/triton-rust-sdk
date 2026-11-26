@@ -18,7 +18,7 @@ publish = false
 
 [workspace.dependencies]
 solana-client = "4.3.0"
-solana-account = "4.5.0"
+solana-account = "5.1.1"
 solana-commitment-config = "3.1.1"
 solana-pubkey = "4.3.0"
 solana-rpc-client-api = "4.3.0"
