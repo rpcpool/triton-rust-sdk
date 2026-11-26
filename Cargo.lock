@@ -5660,7 +5660,7 @@ dependencies = [
 
 [[package]]
 name = "triton-sdk"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "sha2 0.10.9",
  "solana-account",
