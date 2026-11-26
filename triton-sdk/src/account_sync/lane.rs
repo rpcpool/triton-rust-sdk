@@ -295,8 +295,6 @@ impl Lane {
             .copied()
             .collect();
         if *self.desired.borrow() != keys {
-            self.session = 0;
-            self.cache.clear_entries();
             self.desired.send_replace(keys);
         }
     }
@@ -444,6 +442,23 @@ mod tests {
         });
         assert!(lane.cache.get(&key).is_none());
         assert!(lane.snapshots.contains(&key));
+    }
+
+    #[tokio::test]
+    async fn list_change_keeps_session_and_kept_cache_and_snapshots_new_key() {
+        let mut lane = lane();
+        let kept = Pubkey::new_unique();
+        let added = Pubkey::new_unique();
+        lane.set_pinned(HashSet::from([kept]));
+        lane.set_session(1);
+        lane.write_rpc(kept, None, 1);
+        let (ready, _) = oneshot::channel();
+        let (result, _) = oneshot::channel();
+        lane.read(vec![added], ready, result);
+        assert_eq!(lane.session, 1);
+        assert!(lane.cache.get(&kept).is_some());
+        assert_eq!(*lane.desired.borrow(), HashSet::from([kept, added]));
+        assert!(lane.snapshots.contains(&added));
     }
 
     #[tokio::test]

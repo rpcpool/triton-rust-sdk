@@ -18,6 +18,7 @@ pub struct AccountSyncConfig {
     pub dynamic_subscription_lifetime: Duration,
     pub http2_window_size: u32,
     pub max_decoded_message_size: usize,
+    /// HTTP/2 keepalive and app ping interval. Above 25s, HAProxy can close quiet streams.
     pub keepalive_interval: Duration,
     pub keepalive_timeout: Duration,
     pub keepalive_while_idle: bool,
@@ -38,7 +39,7 @@ impl Default for AccountSyncConfig {
             dynamic_subscription_lifetime: Duration::from_secs(60),
             http2_window_size: 16 * 1024 * 1024,
             max_decoded_message_size: 16 * 1024 * 1024,
-            keepalive_interval: Duration::from_secs(30),
+            keepalive_interval: Duration::from_secs(10),
             keepalive_timeout: Duration::from_secs(10),
             keepalive_while_idle: true,
         }
@@ -91,6 +92,7 @@ mod tests {
         };
         assert!(config.validate().is_ok());
         assert_eq!(config.cache_miss_wait, Duration::from_secs(5));
+        assert_eq!(config.keepalive_interval, Duration::from_secs(10));
     }
 
     #[test]
